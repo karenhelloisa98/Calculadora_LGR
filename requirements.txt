@@ -2,3 +2,4 @@ streamlit
 control
 matplotlib
 numpy
+sympy
