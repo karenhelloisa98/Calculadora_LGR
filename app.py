@@ -63,7 +63,9 @@ def calcular_limites_eixos(polos, zeros, pontos_extra_real=None, pontos_extra_im
                             margem_lateral=1.3, margem_direita=1.0, minimo=1.0):
     """Calcula xlim/ylim de forma consistente para TODOS os gráficos,
     a partir dos polos, zeros e pontos extras relevantes (assíntotas,
-    pontos de fuga, cruzamentos no eixo imaginário etc.)."""
+    pontos de fuga, cruzamentos no eixo imaginário, ponto de teste $s_i$ etc.).
+    O limite direito se expande automaticamente caso algum ponto (ex: um s_i
+    com parte real positiva) fique além da margem padrão."""
     reais = [float(np.real(p)) for p in polos] + [float(np.real(z)) for z in zeros]
     imags = [float(np.imag(p)) for p in polos] + [float(np.imag(z)) for z in zeros]
     if pontos_extra_real:
@@ -72,7 +74,9 @@ def calcular_limites_eixos(polos, zeros, pontos_extra_real=None, pontos_extra_im
         imags += list(pontos_extra_imag)
     max_real = max([abs(v) for v in reais] + [minimo])
     max_imag = max([abs(v) for v in imags] + [minimo])
-    xlim = (-max_real * margem_lateral, margem_direita)
+    maior_valor_positivo = max(reais + [0.0])
+    limite_direito = max(margem_direita, maior_valor_positivo * 1.2)
+    xlim = (-max_real * margem_lateral, limite_direito)
     ylim = (-max_imag * margem_lateral, max_imag * margem_lateral)
     return xlim, ylim
 
@@ -218,7 +222,7 @@ def format_factor(roots):
     return result
 
 
-st.set_page_config(page_title="Calculadora LGR", layout="centered")
+st.set_page_config(page_title="Calculadora LGR", layout="wide")
 
 # --- CSS PERSONALIZADO PARA MUDAR A COR DA BARRA LATERAL ---
 st.markdown(
@@ -276,7 +280,8 @@ h_den_str = st.sidebar.text_input("H(s) - Denominador",)
 st.sidebar.header("🎯 Teste de Ponto no LGR")
 si_real = st.sidebar.number_input("Parte real do ponto de teste ($s_i$):", value=None, format="%.2f")
 si_imag = st.sidebar.number_input("Parte imaginária do ponto de teste ($s_i$):", value=None, format="%.2f")
-tolerancia = st.sidebar.number_input("Tolerância (graus):", value=None, format="%.2f")
+
+TOLERANCIA_ANGULO = 0.5  # graus - margem fixa para compensar erros de arredondamento numérico
 
 gerar_btn = st.sidebar.button("Gerar Resolução Completa", type="primary", use_container_width=True)
 
@@ -406,9 +411,9 @@ if gerar_btn:
         else:
             st.write("Não há pólos ou zeros no eixo real.")
 
-        col_esq, col_centro, col_dir = st.columns([0.5, 5, 0.5])
+        col_esq, col_centro, col_dir = st.columns([1, 8, 1])
         with col_centro:
-            fig_real, ax_real = plt.subplots(figsize=(9, 5))
+            fig_real, ax_real = plt.subplots(figsize=(12, 6.5))
 
             plot_polos_zeros(ax_real, polos, zeros, nz_count)
             plot_segmentos_eixo_real(ax_real, polos, zeros)
@@ -455,9 +460,9 @@ if gerar_btn:
                 angulos.append(angle)
                 st.latex(rf"\phi_{{{q}}} = \frac{{(2({q}) + 1)}}{{{diff_pz}}} \cdot 180^\circ = {angle:.1f}^\circ \quad (q = {q})")
                 
-            col_esq, col_centro, col_dir = st.columns([0.5, 5, 0.5])
+            col_esq, col_centro, col_dir = st.columns([1, 8, 1])
             with col_centro:
-                fig_asym, ax_asym = plt.subplots(figsize=(9, 5))
+                fig_asym, ax_asym = plt.subplots(figsize=(12, 6.5))
 
                 plot_polos_zeros(ax_asym, polos, zeros, nz_count)
                 plot_segmentos_eixo_real(ax_asym, polos, zeros)
@@ -539,9 +544,9 @@ if gerar_btn:
 
         centroide, angulos = calcular_assintotas(polos, zeros, np_count, nz_count)
 
-        col_esq, col_centro, col_dir = st.columns([0.5, 5, 0.5])
+        col_esq, col_centro, col_dir = st.columns([1, 8, 1])
         with col_centro:
-            fig_break, ax_break = plt.subplots(figsize=(9, 5))
+            fig_break, ax_break = plt.subplots(figsize=(12, 6.5))
 
             plot_polos_zeros(ax_break, polos, zeros, nz_count)
             plot_segmentos_eixo_real(ax_break, polos, zeros)
@@ -640,9 +645,9 @@ if gerar_btn:
         else:
             st.info("🔹 **Aviso:** A tabela de Routh foi calculada, mas não há ganho crítico $k > 0$ com cruzamento no semiplano direito.")
 
-        col_esq, col_centro, col_dir = st.columns([0.5, 5, 0.5])
+        col_esq, col_centro, col_dir = st.columns([1, 8, 1])
         with col_centro:
-            fig_fin, ax_fin = plt.subplots(figsize=(9, 5))
+            fig_fin, ax_fin = plt.subplots(figsize=(12, 6.5))
 
             k_max_fin = float(k_crit) * 3.0 if k_crit is not None else 1000.0
             branches_fin = calcular_locus(num, den, k_max=k_max_fin)
@@ -726,9 +731,9 @@ if gerar_btn:
         else:
             st.info("🔹 **Aviso:** Este passo não se aplica, pois o sistema não possui pólos ou zeros complexos conjugados (todos são puramente reais). O cálculo de ângulos de partida e chegada é exclusivo para raízes complexas.")
 
-        col_esq, col_centro, col_dir = st.columns([0.5, 5, 0.5])
+        col_esq, col_centro, col_dir = st.columns([1, 8, 1])
         with col_centro:
-            fig_ang, ax_ang = plt.subplots(figsize=(9, 5))
+            fig_ang, ax_ang = plt.subplots(figsize=(12, 6.5))
 
             branches_ang = calcular_locus(num, den)
             plot_locus_fundo(ax_ang, branches_ang)
@@ -760,9 +765,9 @@ if gerar_btn:
         # PASSO FINAL: GRÁFICO LIMPO DO LGR -----------------------
         st.subheader("🔢 Gráfico Final: Lugar das Raízes")
         
-        col_esq, col_centro, col_dir = st.columns([0.5, 5, 0.5])
+        col_esq, col_centro, col_dir = st.columns([1, 8, 1])
         with col_centro:
-            fig_clean, ax_clean = plt.subplots(figsize=(9, 6))
+            fig_clean, ax_clean = plt.subplots(figsize=(12, 7.5))
 
             branches_clean = calcular_locus(num, den)
             for branch in branches_clean:
@@ -785,76 +790,135 @@ if gerar_btn:
         # PASSO 11 e 12 -------------------------------------------
         st.subheader("11. Critério de Ângulo")
 
-        if si_real is None or si_imag is None or tolerancia is None:
-            st.info("🔹 **Aviso:** Preencha a parte real, a parte imaginária e a tolerância do ponto de teste "
+        if si_real is None or si_imag is None:
+            st.info("🔹 **Aviso:** Preencha a parte real e a parte imaginária do ponto de teste "
                     "$s_i$ na barra lateral para ver o critério de ângulo e o cálculo de $K_i$ (Passos 11 e 12).")
         else:
             si = complex(si_real, si_imag)
 
-            st.markdown("Dado um ponto $s_i$ no plano $s$, verifica-se se ele pertence ao LGR avaliando se a soma total de fases é um múltiplo ímpar de $180^\circ$:")
-            st.latex(r"\left. \angle G(s)H(s) \right|_{s=s_i} = \sum \angle(s_i + z_k) - \sum \angle(s_i + p_j) = \pm 180^\circ (2q + 1)")
+            def fmt_c(z):
+                """Formata um número complexo como a+bj, com sinais explícitos."""
+                return f"{np.real(z):+.2f} {np.imag(z):+.2f}j"
 
+            st.markdown("Dado um ponto $s_i$ no plano $s$, verifica-se se ele pertence ao LGR avaliando se a soma total de fases é um múltiplo ímpar de $180^\circ$:")
+            st.latex(r"\sum \angle(s_i - z_j) - \sum \angle(s_i - p_k) = \pm 180^\circ (2q + 1)")
+            st.markdown(f"**Ponto de teste:** $s_i = {si_real:+.2f} {si_imag:+.2f}j$")
+
+            # --- Ângulos dos polos ---
+            st.markdown("**Ângulos dos polos ($\\theta_k$):**")
             angulos_polos = []
-            for p in polos:
+            for idx, p in enumerate(polos, start=1):
                 diff = si - p
                 ang = np.rad2deg(np.arctan2(np.imag(diff), np.real(diff)))
                 angulos_polos.append((p, ang))
-
-            angulos_zeros = []
-            for z in zeros:
-                diff = si - z
-                ang = np.rad2deg(np.arctan2(np.imag(diff), np.real(diff)))
-                angulos_zeros.append((z, ang))
-
+                st.latex(
+                    rf"\theta_{{{idx}}} = \angle(s_i - p_{{{idx}}}) = \angle\left(({fmt_c(si)}) - ({fmt_c(p)})\right) "
+                    rf"= \angle({fmt_c(diff)}) = {ang:.2f}^\circ"
+                )
             soma_ang_polos = sum(a[1] for a in angulos_polos)
-            soma_ang_zeros = sum(a[1] for a in angulos_zeros)
+            st.latex(rf"\sum \theta_k = {soma_ang_polos:.2f}^\circ")
+
+            # --- Ângulos dos zeros ---
+            angulos_zeros = []
+            if nz_count > 0:
+                st.markdown("**Ângulos dos zeros ($\\phi_j$):**")
+                for idx, z in enumerate(zeros, start=1):
+                    diff = si - z
+                    ang = np.rad2deg(np.arctan2(np.imag(diff), np.real(diff)))
+                    angulos_zeros.append((z, ang))
+                    st.latex(
+                        rf"\phi_{{{idx}}} = \angle(s_i - z_{{{idx}}}) = \angle\left(({fmt_c(si)}) - ({fmt_c(z)})\right) "
+                        rf"= \angle({fmt_c(diff)}) = {ang:.2f}^\circ"
+                    )
+                soma_ang_zeros = sum(a[1] for a in angulos_zeros)
+                st.latex(rf"\sum \phi_j = {soma_ang_zeros:.2f}^\circ")
+            else:
+                soma_ang_zeros = 0.0
+                st.markdown("**Ângulos dos zeros:** o sistema não possui zeros finitos, então $\\sum \\phi_j = 0^\\circ$.")
+
+            # --- Avaliação ---
+            st.markdown("**Avaliação:**")
             fase_total = soma_ang_zeros - soma_ang_polos
+            fase_normalizada = fase_total % 360  # sempre no intervalo [0°, 360°)
 
-            fase_mod = (fase_total + 180) % 360 - 180
-            pertence = abs(abs(fase_mod) - 180) <= tolerancia
+            st.latex(rf"\Delta\theta = \sum \phi_j - \sum \theta_k = {soma_ang_zeros:.2f}^\circ - {soma_ang_polos:.2f}^\circ = {fase_total:.2f}^\circ")
+            st.latex(rf"\text{{Ângulo normalizado}} = {fase_normalizada:.2f}^\circ")
 
-            st.markdown(f"**Avaliação para $s_i = {si_real:+.2f} {si_imag:+.2f}j$:**")
-            st.latex(rf"\text{{Fase Total}} = \sum \text{{Zeros}} - \sum \text{{Polos}} = {fase_total:.2f}^\circ")
+            pertence = abs(fase_normalizada - 180) <= TOLERANCIA_ANGULO
 
             if pertence:
-                st.success(f"**Resultado:** O ponto $s_i$ **PERTENCE** ao LGR (dentro da tolerância de $\\pm {tolerancia:.1f}^\\circ$).")
+                st.success(f"✅ **Resultado:** O ponto $s_i$ **PERTENCE** ao LGR "
+                           f"(ângulo normalizado de {fase_normalizada:.2f}° ≈ 180°, dentro da tolerância de $\\pm {TOLERANCIA_ANGULO:.1f}^\\circ$).")
             else:
-                st.error(f"**Resultado:** O ponto $s_i$ **NÃO PERTENCE** ao LGR (fase de {fase_total:.2f}° fora da tolerância).")
+                st.error(f"❌ **Resultado:** O ponto $s_i$ **NÃO PERTENCE** ao LGR "
+                         f"(ângulo normalizado de {fase_normalizada:.2f}° $\\neq$ 180°).")
 
+            # PASSO 12 ---------------------------------------------
             st.subheader("12. Determinação do Parâmetro $K$ no Ponto $s_i$")
-            st.latex(r"K_i = \left. \frac{\prod |s + p_j|}{\prod |s + z_k|} \right|_{s=s_i}")
+            st.latex(r"K = \frac{\prod_i |s_i - p_i|}{\prod_j |s_i - z_j|}")
+            st.markdown(f"**Ponto:** $s_i = {si_real:+.2f} {si_imag:+.2f}j$")
 
-            prod_dist_polos = np.prod([np.abs(si - p) for p in polos])
-            prod_dist_zeros = np.prod([np.abs(si - z) for z in zeros]) if nz_count > 0 else 1.0
+            st.markdown("**Distâncias aos polos:**")
+            dist_polos = []
+            for idx, p in enumerate(polos, start=1):
+                diff = si - p
+                d = np.abs(diff)
+                dist_polos.append(d)
+                st.latex(rf"|s_i - p_{{{idx}}}| = |({fmt_c(si)}) - ({fmt_c(p)})| = |{fmt_c(diff)}| = {d:.4f}")
+            prod_dist_polos = np.prod(dist_polos)
+            termos_polos = " \\cdot ".join(f"{d:.4f}" for d in dist_polos)
+            st.latex(rf"\prod_i |s_i - p_i| = {termos_polos} = {prod_dist_polos:.4f}")
 
+            prod_dist_zeros = 1.0
+            if nz_count > 0:
+                st.markdown("**Distâncias aos zeros:**")
+                dist_zeros = []
+                for idx, z in enumerate(zeros, start=1):
+                    diff = si - z
+                    d = np.abs(diff)
+                    dist_zeros.append(d)
+                    st.latex(rf"|s_i - z_{{{idx}}}| = |({fmt_c(si)}) - ({fmt_c(z)})| = |{fmt_c(diff)}| = {d:.4f}")
+                prod_dist_zeros = np.prod(dist_zeros)
+                termos_zeros = " \\cdot ".join(f"{d:.4f}" for d in dist_zeros)
+                st.latex(rf"\prod_j |s_i - z_j| = {termos_zeros} = {prod_dist_zeros:.4f}")
+            else:
+                st.markdown("**Distâncias aos zeros:** o sistema não possui zeros finitos, então $\\prod_j |s_i - z_j| = 1$.")
+
+            st.markdown("**Resultado:**")
             if prod_dist_zeros == 0:
                 st.warning("🔹 **Aviso:** O ponto $s_i$ escolhido coincide exatamente com um zero do sistema — "
                            "$K_i$ tenderia ao infinito nesse ponto, então o cálculo não é exibido.")
             else:
                 K_i = prod_dist_polos / prod_dist_zeros
-                st.latex(rf"K_i = {K_i:.4f}")
+                st.latex(rf"K = \frac{{{prod_dist_polos:.4f}}}{{{prod_dist_zeros:.4f}}} = {K_i:.4f}")
+
+                if pertence:
+                    st.success(f"O ponto **pertence** ao LGR. $K = {K_i:.4f}$")
+                else:
+                    st.warning(f"O ponto **não pertence** ao LGR. $K = {K_i:.4f}$ (valor de referência, "
+                               f"pois o critério de ângulo não foi satisfeito nesse ponto).")
 
                 # --- Gráfico Demonstrativo ---
-                col_esq, col_centro, col_dir = st.columns([0.5, 5, 0.5])
+                col_esq, col_centro, col_dir = st.columns([1, 8, 1])
                 with col_centro:
-                    fig_test, ax_test = plt.subplots(figsize=(9, 5))
-
-                    branches_test = calcular_locus(num, den)
-                    plot_locus_fundo(ax_test, branches_test)
-                    plot_segmentos_eixo_real(ax_test, polos, zeros, com_label=False)
-
-                    ax_test.scatter([si_real], [si_imag], marker='s', color='magenta', s=100, label=f'$s_i$ (K = {K_i:.2f})', zorder=7)
+                    fig_test, ax_test = plt.subplots(figsize=(12, 6.5))
 
                     for p, _ in angulos_polos:
-                        ax_test.plot([np.real(p), si_real], [np.imag(p), si_imag], color='gray', linestyle=':', lw=1.5, zorder=4)
+                        ax_test.plot([np.real(p), si_real], [np.imag(p), si_imag], color='red', linestyle=':', lw=1.5, zorder=4)
                     for z, _ in angulos_zeros:
-                        ax_test.plot([np.real(z), si_real], [np.imag(z), si_imag], color='blue', linestyle=':', lw=1.5, zorder=4)
+                        ax_test.plot([np.real(z), si_real], [np.imag(z), si_imag], color='green', linestyle=':', lw=1.5, zorder=4)
 
                     plot_polos_zeros(ax_test, polos, zeros, nz_count)
+                    marcador_si = 'o' if pertence else 'X'
+                    cor_si = 'darkred'
+                    ax_test.scatter([si_real], [si_imag], marker=marcador_si, color=cor_si, s=220,
+                                    edgecolors='black', linewidths=1,
+                                    label=f'$s_i = {si_real:+.2f} {si_imag:+.2f}j$ ({"pertence" if pertence else "não pertence"})',
+                                    zorder=7)
 
                     aplicar_limites(ax_test, polos, zeros, pontos_extra_real=[si_real], pontos_extra_imag=[si_imag])
-                    formatar_eixos(ax_test, "Teste de Localização de Raízes ($s_i$)")
-                    ax_test.legend(loc='upper right')
+                    formatar_eixos(ax_test, "Critério de Ângulo")
+                    ax_test.legend(loc='best')
                     st.pyplot(fig_test, use_container_width=True)
 
     except Exception as e:
