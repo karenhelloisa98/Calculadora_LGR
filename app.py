@@ -15,10 +15,17 @@ from matplotlib.lines import Line2D
 def calcular_locus(num, den, k_max=1000.0):
     """Calcula os ramos do LGR (K de 0 até k_max) tentando usar a
     biblioteca `control`; se falhar, refaz por rastreamento manual
-    das raízes (garantindo a continuidade dos ramos)."""
+    das raízes (garantindo a continuidade dos ramos).
+
+    A amostragem de K é concentrada perto de zero (escala geométrica)
+    porque é ali que costumam ocorrer os pontos de saída/entrada — onde
+    duas raízes quase coincidem e o cálculo numérico de raízes fica mais
+    sensível. Sem essa densidade extra, o ramo pode parecer "descolar"
+    do eixo real um pouco antes do ponto de saída exato."""
     k_lin_top = min(k_max, 50.0)
     kvect = np.concatenate([
-        np.linspace(0, k_lin_top, 1000),
+        [0.0],
+        np.geomspace(1e-6, k_lin_top, 8000),
         np.logspace(np.log10(max(k_lin_top, 1e-3)), np.log10(max(k_max, k_lin_top * 1.01)), 3000)
     ])
     try:
@@ -26,22 +33,20 @@ def calcular_locus(num, den, k_max=1000.0):
         rlist, _ = ct.root_locus(sys_temp, kvect=kvect, Plot=False)
         return [rlist[:, col] for col in range(rlist.shape[1])]
     except Exception:
+        from scipy.optimize import linear_sum_assignment
         den_arr = np.array(den, dtype=float)
         num_arr = np.array(num, dtype=float)
         prev_roots = np.roots(den_arr)
-        branches = [[] for _ in range(len(prev_roots))]
+        n = len(prev_roots)
+        branches = [[] for _ in range(n)]
         for kv in kvect:
             poly_k = np.polyadd(den_arr, kv * num_arr)
             current_roots = np.roots(poly_k)
-            matched = np.zeros(len(current_roots), dtype=bool)
-            current_sorted = np.zeros_like(current_roots)
-            for i, pr in enumerate(prev_roots):
-                distances = [np.abs(pr - cr) if not matched[j] else np.inf for j, cr in enumerate(current_roots)]
-                best_j = np.argmin(distances)
-                matched[best_j] = True
-                current_sorted[i] = current_roots[best_j]
+            custo = np.abs(prev_roots[:, None] - current_roots[None, :])
+            linhas, colunas = linear_sum_assignment(custo)
+            current_sorted = current_roots[colunas]
             prev_roots = current_sorted
-            for branch_idx, r in enumerate(current_sorted):
+            for branch_idx, r in zip(linhas, current_sorted):
                 branches[branch_idx].append(r)
         return [np.array(b) for b in branches]
 
@@ -60,12 +65,16 @@ def calcular_assintotas(polos, zeros, np_count, nz_count):
 
 
 def calcular_limites_eixos(polos, zeros, pontos_extra_real=None, pontos_extra_imag=None,
-                            margem_lateral=1.3, margem_direita=1.0, minimo=1.0):
+                            margem_lateral=1.3, margem_vertical=None, margem_direita=1.0, minimo=1.0):
     """Calcula xlim/ylim de forma consistente para TODOS os gráficos,
     a partir dos polos, zeros e pontos extras relevantes (assíntotas,
     pontos de fuga, cruzamentos no eixo imaginário, ponto de teste $s_i$ etc.).
     O limite direito se expande automaticamente caso algum ponto (ex: um s_i
-    com parte real positiva) fique além da margem padrão."""
+    com parte real positiva) fique além da margem padrão. `margem_vertical`
+    permite abrir mais o eixo Y sem afetar o eixo X (útil para mostrar o
+    ramo do LGR se aproximando de uma assíntota vertical)."""
+    if margem_vertical is None:
+        margem_vertical = margem_lateral
     reais = [float(np.real(p)) for p in polos] + [float(np.real(z)) for z in zeros]
     imags = [float(np.imag(p)) for p in polos] + [float(np.imag(z)) for z in zeros]
     if pontos_extra_real:
@@ -77,7 +86,7 @@ def calcular_limites_eixos(polos, zeros, pontos_extra_real=None, pontos_extra_im
     maior_valor_positivo = max(reais + [0.0])
     limite_direito = max(margem_direita, maior_valor_positivo * 1.2)
     xlim = (-max_real * margem_lateral, limite_direito)
-    ylim = (-max_imag * margem_lateral, max_imag * margem_lateral)
+    ylim = (-max_imag * margem_vertical, max_imag * margem_vertical)
     return xlim, ylim
 
 
@@ -624,32 +633,45 @@ if gerar_btn:
             s1_row = routh[-2]
             if K in s1_row[0].free_symbols:
                 k_sols = sp.solve(s1_row[0], K)
-                valid_ks = [k for k in k_sols if k.is_real and k > 0]
-        
-        cross_pts = []
-        k_crit = None
+                valid_ks = sorted([k for k in k_sols if k.is_real and k > 0])
+
+        cross_pts = []         # lista de pares (k_crit, w) usados na plotagem
+        resultados_criticos = []
+
         if valid_ks:
             aux_row = routh[-3]
-            k_crit = valid_ks[0]
             st.markdown(f"Para encontrar a margem de estabilidade, forçamos o primeiro termo da linha $s^{{1}}$ a ser zero:")
             st.latex(rf"{sp.latex(s1_row[0])} = 0")
-            
-            st.markdown(f"Para o ganho crítico $k = {float(k_crit):.4f}$, a equação auxiliar (da linha $s^{{2}}$) é:")
-            aux_eq = sum(coef.subs(K, k_crit) * s**(2*(len(aux_row)-1-j)) for j, coef in enumerate(aux_row) if coef != 0)
-            st.latex(rf"{sp.latex(aux_eq.evalf(4))} = 0")
-            
-            cross_pts = [float(sp.im(r)) for r in sp.roots(aux_eq, s).keys() if sp.re(r) == 0 and sp.im(r) > 0]
-            if cross_pts:
-                w_cross = cross_pts[0]
-                st.markdown(f"**Pontos de cruzamento exatos no eixo imaginário:** $s = -{w_cross:.4f}j, {w_cross:.4f}j$")
+
+            if len(valid_ks) > 1:
+                st.markdown(f"Essa equação tem **{len(valid_ks)} soluções positivas** para $K$ — ou seja, "
+                            f"o sistema cruza o eixo imaginário em mais de um valor de ganho (sistema condicionalmente estável).")
+
+            for k_crit_i in valid_ks:
+                aux_eq = sum(coef.subs(K, k_crit_i) * s**(2*(len(aux_row)-1-j)) for j, coef in enumerate(aux_row) if coef != 0)
+                raizes_aux = sp.roots(aux_eq, s)
+                ws = sorted(set(float(sp.im(r)) for r in raizes_aux.keys() if sp.re(r) == 0 and sp.im(r) > 0))
+
+                st.markdown(f"Para o ganho crítico $K = {float(k_crit_i):.4f}$, a equação auxiliar (da linha $s^{{{degree - (len(routh) - 3)}}}$) é:")
+                st.latex(rf"{sp.latex(aux_eq.evalf(4))} = 0")
+
+                if ws:
+                    pontos_str = ", ".join([f"\\pm {w:.4f}j" for w in ws])
+                    st.markdown(f"**Pontos de cruzamento exatos no eixo imaginário:** $s = {pontos_str}$")
+                    for w in ws:
+                        cross_pts.append((float(k_crit_i), w))
+                    resultados_criticos.append((float(k_crit_i), ws))
+
+            if not resultados_criticos:
+                st.info("🔹 **Aviso:** Os ganhos críticos foram encontrados, mas a equação auxiliar não teve raízes puramente imaginárias.")
         else:
-            st.info("🔹 **Aviso:** A tabela de Routh foi calculada, mas não há ganho crítico $k > 0$ com cruzamento no semiplano direito.")
+            st.info("🔹 **Aviso:** A tabela de Routh foi calculada, mas não há ganho crítico $K > 0$ com cruzamento no semiplano direito.")
 
         col_esq, col_centro, col_dir = st.columns([1, 8, 1])
         with col_centro:
             fig_fin, ax_fin = plt.subplots(figsize=(12, 6.5))
 
-            k_max_fin = float(k_crit) * 3.0 if k_crit is not None else 1000.0
+            k_max_fin = float(max(valid_ks)) * 15.0 if valid_ks else 1000.0
             branches_fin = calcular_locus(num, den, k_max=k_max_fin)
             plot_locus_fundo(ax_fin, branches_fin)
 
@@ -663,17 +685,20 @@ if gerar_btn:
             extras_legenda = None
             pontos_extra_imag = None
             if cross_pts:
-                w = cross_pts[0]
-                pontos_extra_imag = [w, -w]
-                ax_fin.scatter([0, 0], [w, -w], marker='s', facecolor='cyan', edgecolor='blue', s=80, linewidths=1.5, zorder=7)
-                ax_fin.annotate(rf"$j\omega = {w:.2f}$", (0, w), textcoords="offset points", xytext=(20, 0),
-                                ha='left', va='center', fontsize=9, fontweight='bold', color='blue',
-                                bbox=dict(boxstyle="square,pad=0.2", fc="white", ec="blue", lw=1),
-                                arrowprops=dict(arrowstyle="->", color="blue", lw=1))
-                ax_fin.annotate(rf"$j\omega = -{w:.2f}$", (0, -w), textcoords="offset points", xytext=(20, 0),
-                                ha='left', va='center', fontsize=9, fontweight='bold', color='blue',
-                                bbox=dict(boxstyle="square,pad=0.2", fc="white", ec="blue", lw=1),
-                                arrowprops=dict(arrowstyle="->", color="blue", lw=1))
+                pontos_extra_imag = [w for _, w in cross_pts] + [-w for _, w in cross_pts]
+                offsets_y = [12, -12] * (len(cross_pts) // 2 + 1)
+                for idx, (k_val, w) in enumerate(cross_pts):
+                    ax_fin.scatter([0, 0], [w, -w], marker='s', facecolor='cyan', edgecolor='blue', s=80, linewidths=1.5, zorder=7)
+                    ax_fin.annotate(rf"$j\omega = {w:.2f}$ (K={k_val:.2f})", (0, w), textcoords="offset points",
+                                    xytext=(20, offsets_y[idx]),
+                                    ha='left', va='center', fontsize=8, fontweight='bold', color='blue',
+                                    bbox=dict(boxstyle="square,pad=0.2", fc="white", ec="blue", lw=1),
+                                    arrowprops=dict(arrowstyle="->", color="blue", lw=1))
+                    ax_fin.annotate(rf"$j\omega = -{w:.2f}$ (K={k_val:.2f})", (0, -w), textcoords="offset points",
+                                    xytext=(20, -offsets_y[idx]),
+                                    ha='left', va='center', fontsize=8, fontweight='bold', color='blue',
+                                    bbox=dict(boxstyle="square,pad=0.2", fc="white", ec="blue", lw=1),
+                                    arrowprops=dict(arrowstyle="->", color="blue", lw=1))
                 extras_legenda = [Line2D([0], [0], marker='s', color='w', markerfacecolor='cyan',
                                           markeredgecolor='blue', markersize=8, label='Cruzamento Eixo Imag.')]
 
@@ -681,7 +706,8 @@ if gerar_btn:
 
             aplicar_limites(ax_fin, polos, zeros,
                              pontos_extra_real=[centroide] if centroide is not None else None,
-                             pontos_extra_imag=pontos_extra_imag)
+                             pontos_extra_imag=pontos_extra_imag,
+                             margem_vertical=2.4)
             formatar_eixos(ax_fin, "LGR com Cruzamentos no Eixo Imaginário")
             montar_legenda(ax_fin, np_count, nz_count, extras=extras_legenda)
             st.pyplot(fig_fin, use_container_width=True)
@@ -689,47 +715,103 @@ if gerar_btn:
 
         # PASSO 10 ------------------------------------------------
         st.subheader("10. Ângulos de partida/chegada")
-        
-        complex_poles = [p for p in polos if not np.isclose(np.imag(p), 0, atol=1e-4)]
-        
-        if len(complex_poles) > 0:
-            st.markdown("O ângulo de partida de um pólo complexo conjugado $p$ é dado por:")
-            st.latex(r"\theta = 180^\circ - \sum \angle(p - z_i) + \sum \angle(p - p_j)")
-            
-            angles_dict = {}
-            for cp in complex_poles:
-                imag_signal = "+" if np.imag(cp) > 0 else "-"
-                imag_val = abs(np.imag(cp))
-                st.markdown(f"**Para o pólo em $s = {np.real(cp):.1f} {imag_signal} {imag_val:.1f}j$:**")
-                
-                termos_polos_str = []
-                sum_angles_other = 0.0
-                
-                for p in polos:
-                    if np.isclose(p, cp, atol=1e-4): continue
-                    diff = cp - p
-                    ang_p = np.rad2deg(np.arctan2(np.imag(diff), np.real(diff)))
-                    sum_angles_other += ang_p
-                    termos_polos_str.append(f"{ang_p:+.1f}^\circ")
-                    
-                termos_zeros_str = []
-                sum_angles_zeros = 0.0
-                for z in zeros:
-                    diff = cp - z
-                    ang_z = np.rad2deg(np.arctan2(np.imag(diff), np.real(diff)))
-                    sum_angles_zeros += ang_z
-                    termos_zeros_str.append(f"{ang_z:+.1f}^\circ")
-                    
-                theta = 180.0 - sum_angles_zeros + sum_angles_other
-                while theta > 180: theta -= 360
-                while theta <= -180: theta += 360
-                
-                angles_dict[cp] = theta
-                detalhe_p = "".join(termos_polos_str)
-                detalhe_z = "".join(termos_zeros_str) if termos_zeros_str else "0.0^\circ"
-                st.latex(rf"\theta = 180^\circ - ({detalhe_z}) + ({detalhe_p}) = {theta:.1f}^\circ")
-        else:
+
+        def fmt_c10(z):
+            return f"{np.real(z):+.2f} {np.imag(z):+.2f}j"
+
+        # apenas um polo/zero de cada par conjugado (o outro é o espelho)
+        complex_poles = [p for p in polos if not np.isclose(np.imag(p), 0, atol=1e-4) and np.imag(p) > 0]
+        complex_zeros = [z for z in zeros if not np.isclose(np.imag(z), 0, atol=1e-4) and np.imag(z) > 0]
+
+        angles_polos_dict = {}
+        angles_zeros_dict = {}
+
+        if len(complex_poles) == 0 and len(complex_zeros) == 0:
             st.info("🔹 **Aviso:** Este passo não se aplica, pois o sistema não possui pólos ou zeros complexos conjugados (todos são puramente reais). O cálculo de ângulos de partida e chegada é exclusivo para raízes complexas.")
+        else:
+            if complex_poles:
+                st.markdown("**Ângulos de partida (polos complexos):**")
+                st.latex(r"\theta_d = 180^\circ - \sum_{j \neq k} \angle(p_k - p_j) + \sum_j \angle(p_k - z_j)")
+
+                for pk in complex_poles:
+                    st.markdown(f"**Polo $p_k = {fmt_c10(pk)}$:**")
+
+                    st.markdown("Ângulos dos outros polos:")
+                    soma_p = 0.0
+                    for pj in polos:
+                        if np.isclose(pj, pk, atol=1e-4):
+                            continue
+                        diff = pk - pj
+                        ang = np.rad2deg(np.arctan2(np.imag(diff), np.real(diff)))
+                        soma_p += ang
+                        st.latex(rf"\angle(p_k - p_j) = \angle\left(({fmt_c10(pk)}) - ({fmt_c10(pj)})\right) = \angle({fmt_c10(diff)}) = {ang:.2f}^\circ")
+                    st.latex(rf"\sum_{{j \neq k}} \angle(p_k - p_j) = {soma_p:.2f}^\circ")
+
+                    soma_z = 0.0
+                    if nz_count > 0:
+                        st.markdown("Ângulos dos zeros:")
+                        for zj in zeros:
+                            diff = pk - zj
+                            ang = np.rad2deg(np.arctan2(np.imag(diff), np.real(diff)))
+                            soma_z += ang
+                            st.latex(rf"\angle(p_k - z_j) = \angle\left(({fmt_c10(pk)}) - ({fmt_c10(zj)})\right) = \angle({fmt_c10(diff)}) = {ang:.2f}^\circ")
+                        st.latex(rf"\sum_j \angle(p_k - z_j) = {soma_z:.2f}^\circ")
+                    else:
+                        st.markdown("Ângulos dos zeros: o sistema não possui zeros finitos, então $\\sum_j \\angle(p_k - z_j) = 0^\\circ$.")
+
+                    theta_d = 180.0 - soma_p + soma_z
+                    theta_d = (theta_d + 180) % 360 - 180  # normaliza para (-180°, 180°]
+                    theta_d_conj = -theta_d
+                    st.latex(rf"\theta_d = 180^\circ - ({soma_p:.2f}^\circ) + ({soma_z:.2f}^\circ) = {theta_d:+.2f}^\circ")
+                    st.markdown(
+                        f"**Portanto:** para o polo $p_k = {fmt_c10(pk)}$, $\\theta_d = {theta_d:+.2f}^\\circ$; "
+                        f"para o seu conjugado $\\overline{{p_k}} = {fmt_c10(np.conj(pk))}$, $\\theta_d = {theta_d_conj:+.2f}^\\circ$."
+                    )
+
+                    angles_polos_dict[pk] = theta_d
+                    angles_polos_dict[np.conj(pk)] = theta_d_conj
+
+            if complex_zeros:
+                st.markdown("**Ângulos de chegada (zeros complexos):**")
+                st.latex(r"\theta_a = 180^\circ - \sum_{j \neq k} \angle(z_k - z_j) + \sum_j \angle(z_k - p_j)")
+
+                for zk in complex_zeros:
+                    st.markdown(f"**Zero $z_k = {fmt_c10(zk)}$:**")
+
+                    soma_z_others = 0.0
+                    if nz_count > 1:
+                        st.markdown("Ângulos dos outros zeros:")
+                        for zj in zeros:
+                            if np.isclose(zj, zk, atol=1e-4):
+                                continue
+                            diff = zk - zj
+                            ang = np.rad2deg(np.arctan2(np.imag(diff), np.real(diff)))
+                            soma_z_others += ang
+                            st.latex(rf"\angle(z_k - z_j) = \angle\left(({fmt_c10(zk)}) - ({fmt_c10(zj)})\right) = \angle({fmt_c10(diff)}) = {ang:.2f}^\circ")
+                        st.latex(rf"\sum_{{j \neq k}} \angle(z_k - z_j) = {soma_z_others:.2f}^\circ")
+                    else:
+                        st.markdown("Ângulos dos outros zeros: não há outros zeros no sistema, então $\\sum = 0^\\circ$.")
+
+                    st.markdown("Ângulos dos polos:")
+                    soma_p2 = 0.0
+                    for pj in polos:
+                        diff = zk - pj
+                        ang = np.rad2deg(np.arctan2(np.imag(diff), np.real(diff)))
+                        soma_p2 += ang
+                        st.latex(rf"\angle(z_k - p_j) = \angle\left(({fmt_c10(zk)}) - ({fmt_c10(pj)})\right) = \angle({fmt_c10(diff)}) = {ang:.2f}^\circ")
+                    st.latex(rf"\sum_j \angle(z_k - p_j) = {soma_p2:.2f}^\circ")
+
+                    theta_a = 180.0 - soma_z_others + soma_p2
+                    theta_a = (theta_a + 180) % 360 - 180  # normaliza para (-180°, 180°]
+                    theta_a_conj = -theta_a
+                    st.latex(rf"\theta_a = 180^\circ - ({soma_z_others:.2f}^\circ) + ({soma_p2:.2f}^\circ) = {theta_a:+.2f}^\circ")
+                    st.markdown(
+                        f"**Portanto:** para o zero $z_k = {fmt_c10(zk)}$, $\\theta_a = {theta_a:+.2f}^\\circ$; "
+                        f"para o seu conjugado $\\overline{{z_k}} = {fmt_c10(np.conj(zk))}$, $\\theta_a = {theta_a_conj:+.2f}^\\circ$."
+                    )
+
+                    angles_zeros_dict[zk] = theta_a
+                    angles_zeros_dict[np.conj(zk)] = theta_a_conj
 
         col_esq, col_centro, col_dir = st.columns([1, 8, 1])
         with col_centro:
@@ -740,24 +822,32 @@ if gerar_btn:
             plot_segmentos_eixo_real(ax_ang, polos, zeros)
             plot_assintotas(ax_ang, centroide, angulos)
 
-            if len(complex_poles) > 0:
-                for cp, th in angles_dict.items():
-                    r_cp, i_cp = np.real(cp), np.imag(cp)
-                    rad_th = np.deg2rad(th)
-                    dx = 1.0 * np.cos(rad_th)
-                    dy = 1.0 * np.sin(rad_th)
-                    
-                    ax_ang.annotate("", xy=(r_cp, i_cp), xytext=(r_cp - dx, i_cp - dy),
-                                    arrowprops=dict(arrowstyle="->", color="maroon", lw=2, shrinkA=0, shrinkB=5), zorder=6)
-                    
-                    text_x = r_cp - 1.8
-                    text_y = i_cp + (1.2 if i_cp > 0 else -1.2)
-                    ax_ang.text(text_x, text_y, f"{th:.1f}°", fontsize=9, fontweight='bold', color='maroon',
-                                ha='center', va='center', bbox=dict(boxstyle="square,pad=0.2", fc="white", ec="maroon", lw=1))
+            def desenhar_vetor_angulo(ax, ponto, angulo, cor):
+                r_p, i_p = np.real(ponto), np.imag(ponto)
+                rad_th = np.deg2rad(angulo)
+                dx, dy = 1.0 * np.cos(rad_th), 1.0 * np.sin(rad_th)
+                ax.annotate("", xy=(r_p, i_p), xytext=(r_p - dx, i_p - dy),
+                            arrowprops=dict(arrowstyle="->", color=cor, lw=2, shrinkA=0, shrinkB=5), zorder=6)
+                text_x = r_p - 1.8
+                text_y = i_p + (0.6 if i_p >= 0 else -0.6)
+                ax.text(text_x, text_y, f"{angulo:+.1f}°", fontsize=9, fontweight='bold', color=cor,
+                        ha='center', va='center', bbox=dict(boxstyle="square,pad=0.2", fc="white", ec=cor, lw=1))
+                return text_x, text_y
+
+            pontos_rotulos_x, pontos_rotulos_y = [], []
+            for pk, th in angles_polos_dict.items():
+                tx, ty = desenhar_vetor_angulo(ax_ang, pk, th, 'maroon')
+                pontos_rotulos_x.append(tx)
+                pontos_rotulos_y.append(ty)
+            for zk, th in angles_zeros_dict.items():
+                tx, ty = desenhar_vetor_angulo(ax_ang, zk, th, 'green')
+                pontos_rotulos_x.append(tx)
+                pontos_rotulos_y.append(ty)
 
             plot_polos_zeros(ax_ang, polos, zeros, nz_count)
 
-            aplicar_limites(ax_ang, polos, zeros, pontos_extra_real=[centroide] if centroide is not None else None)
+            extras_reais = pontos_rotulos_x + ([centroide] if centroide is not None else [])
+            aplicar_limites(ax_ang, polos, zeros, pontos_extra_real=extras_reais, pontos_extra_imag=pontos_rotulos_y)
             formatar_eixos(ax_ang, "Lugar das Raízes com Vetores de Partida/Chegada")
             montar_legenda(ax_ang, np_count, nz_count)
             st.pyplot(fig_ang, use_container_width=True)
